@@ -49,7 +49,7 @@ void captureThread(NetDevice& netDevice)
 
         {
             lock_guard<mutex> lock(queueMutex);
-            packetQueue.push_back(move(packets));
+            packetQueue.push_back(std::move(packets));
         }
         queueCondVar.notify_one();
 
@@ -86,7 +86,7 @@ void parseThread()
 
         if (!packetQueue.empty())
         {
-            auto packets = move(packetQueue.front());
+            auto packets = std::move(packetQueue.front());
             packetQueue.pop_front();
             lock.unlock();
 
@@ -148,8 +148,16 @@ int main()
     {
         cout << i + 1 << ": " << devices[i].name << " (" << devices[i].description << ")" << endl;
     }
+    int choice = -1;
+    int deviceCount = static_cast<int>(devices.size());
+    while (choice < 0 || choice >= deviceCount)
+    {
+        cout << "Select a device(by idx): ";
+        cin >> choice;
+        choice = choice - 1;
+    }
 
-    netDevice.selectDevice(devices[0].name);
+    netDevice.selectDevice(devices[4].name);
 
     netDevice.openDevice();
 

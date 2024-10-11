@@ -13,7 +13,7 @@
 class NetDevice
 {
   public:
-    class DeviceInfo;
+    struct DeviceInfo;
 
   private:
     pcap_t*     _device_handle;  ///< 存储打开的设备句柄
