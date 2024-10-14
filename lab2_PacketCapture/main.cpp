@@ -10,7 +10,27 @@
 
 #include <net_devs.h>
 
-#define GAP_TIME 1000  // 1000ms
+#if defined(__linux__)
+#include <termios.h>
+#include <unistd.h>
+
+void setNonCanonicalMode(bool enable)
+{
+    static struct termios oldt, newt;
+    if (enable)
+    {
+        tcgetattr(STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    }
+    else { tcsetattr(STDIN_FILENO, TCSANOW, &oldt); }
+}
+#elif defined(_WIN32)
+#include <conio.h>
+#endif
+
+#define GAP_TIME 500  // 500ms
 
 using namespace std;
 
@@ -59,22 +79,28 @@ void captureThread(NetDevice& netDevice)
 
 void parsePackets(const vector<pair<struct pcap_pkthdr, vector<u_char>>>& packets)
 {
+    stringstream oss;
     for (const auto& [header, packet] : packets)
     {
         string formattedTime = formatTimestamp(header.ts);
-        cout << "Time: " << formattedTime << " | ";
+        oss << "Time: " << formattedTime << " | ";
 
-        cout << "Source MAC: ";
+        oss << "Src MAC: ";
         for (int i = 6; i < 12; ++i)
         {
-            cout << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 11 ? "" : ":");
+            oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 11 ? "" : ":");
         }
 
-        cout << " -> Destination MAC: ";
-        for (int i = 0; i < 6; ++i) { cout << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 5 ? "" : ":"); }
+        oss << " -> Dest MAC: ";
+        for (int i = 0; i < 6; ++i) { oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 5 ? "" : ":"); }
 
-        cout << endl;
+        uint16_t etherType = (packet[12] << 8) | packet[13];
+        oss << " | Type: " << hex << setw(4) << setfill('0') << etherType;
+
+        oss << "\n";
     }
+    cout << oss.str();
+    fflush(stdout);
 }
 
 void parseThread()
@@ -82,9 +108,9 @@ void parseThread()
     while (running)
     {
         unique_lock<mutex> lock(queueMutex);
-        queueCondVar.wait(lock, [] { return !packetQueue.empty() || !running; });
+        queueCondVar.wait(lock, [] { return (!packetQueue.empty() && !paused) || !running; });
 
-        if (!packetQueue.empty())
+        if (!packetQueue.empty() && !paused)
         {
             auto packets = std::move(packetQueue.front());
             packetQueue.pop_front();
@@ -93,6 +119,8 @@ void parseThread()
             parsePackets(packets);
         }
         else if (!running) { break; }
+
+        this_thread::sleep_for(chrono::milliseconds(100));
     }
 }
 
@@ -100,8 +128,15 @@ void controlThread()
 {
     while (running)
     {
-        char command;
-        cin >> command;
+        char command = '\0';
+
+#if defined(__linux__)
+        setNonCanonicalMode(true);
+        command = getchar();
+        setNonCanonicalMode(false);
+#elif defined(_WIN32)
+        if (_kbhit()) { command = _getch(); }
+#endif
 
         if (command == 'p')
         {
@@ -124,50 +159,66 @@ void controlThread()
                 running = false;
                 paused  = false;
             }
-            cout << "Exiting..." << endl;
+            cout << "Exiting and returning to device selection..." << endl;
             queueCondVar.notify_all();
             pauseCondVar.notify_all();
             break;
         }
+        this_thread::sleep_for(chrono::milliseconds(100));
     }
 }
 
 int main()
 {
     NetDevice netDevice;
-
-    const vector<NetDevice::DeviceInfo>& devices = NetDevice::getDevices();
-    if (devices.empty())
+    while (running)
     {
-        cerr << "No network devices detected" << endl;
-        return 1;
+#if defined(__linux__)
+        system("clear");
+#elif defined(_WIN32)
+        system("cls");
+#endif
+
+        const vector<NetDevice::DeviceInfo>& devices = NetDevice::getDevices();
+        if (devices.empty())
+        {
+            cerr << "No network devices detected" << endl;
+            return 1;
+        }
+
+        cout << "Available Devices:" << endl;
+        for (size_t i = 0; i < devices.size(); ++i)
+        {
+            cout << i + 1 << ": " << devices[i].name << " (" << devices[i].description << ")" << endl;
+        }
+
+        char entry       = '\0';
+        int  choice      = -1;
+        int  deviceCount = static_cast<int>(devices.size());
+
+        while (choice < 0 || choice >= deviceCount)
+        {
+            cout << "Select a device(by idx) or q to exit: ";
+            cin >> entry;
+            if (entry == 'q') { return 0; }
+            choice = entry - '1';
+        }
+
+        packetQueue.clear();
+
+        netDevice.selectDevice(devices[choice].name);
+        netDevice.openDevice();
+
+        thread capture(captureThread, ref(netDevice));
+        thread parse(parseThread);
+        thread control(controlThread);
+
+        control.join();
+        capture.join();
+        parse.join();
+
+        netDevice.closeDevice();
+
+        if (!running) { running = true; }
     }
-
-    cout << "Available Devices:" << endl;
-    for (size_t i = 0; i < devices.size(); ++i)
-    {
-        cout << i + 1 << ": " << devices[i].name << " (" << devices[i].description << ")" << endl;
-    }
-    int choice = -1;
-    int deviceCount = static_cast<int>(devices.size());
-    while (choice < 0 || choice >= deviceCount)
-    {
-        cout << "Select a device(by idx): ";
-        cin >> choice;
-        choice = choice - 1;
-    }
-
-    netDevice.selectDevice(devices[4].name);
-
-    netDevice.openDevice();
-
-    thread capture(captureThread, ref(netDevice));
-    thread parse(parseThread);
-    thread control(controlThread);
-
-    control.join();
-    capture.join();
-    parse.join();
-
-    netDevice.closeDevice();
 }

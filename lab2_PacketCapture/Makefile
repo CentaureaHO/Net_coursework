@@ -21,7 +21,7 @@ ifeq ($(OS),Windows_NT)
     SEP := /
     SOURCES := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(SRC_DIR)/*.c)
 else
-    LDFLAGS := -lpcap
+    LDFLAGS := -lpcap -lncurses
     MKDIR := mkdir -p
     RMDIR := rm -rf
     RM := rm -f
