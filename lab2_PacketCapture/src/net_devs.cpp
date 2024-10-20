@@ -59,7 +59,7 @@ void NetDevice::openDevice()
     if (_device_name.empty()) { throw runtime_error("No device selected"); }
 
     char errbuf[PCAP_ERRBUF_SIZE];
-    _device_handle = pcap_open_live(_device_name.c_str(), BUFSIZ, 1, 1000, errbuf);
+    _device_handle = pcap_open_live(_device_name.c_str(), 64, 1, 1000, errbuf);
     if (_device_handle == nullptr) { throw runtime_error("Error opening device: " + string(errbuf)); }
 }
 
@@ -91,6 +91,5 @@ void NetDevice::closeDevice()
 void NetDevice::packetCollector(u_char* userData, const struct pcap_pkthdr* packetHeader, const u_char* packet)
 {
     auto* capturedPackets = reinterpret_cast<vector<pair<struct pcap_pkthdr, vector<u_char>>>*>(userData);
-
     capturedPackets->emplace_back(*packetHeader, vector<u_char>(packet, packet + packetHeader->len));
 }

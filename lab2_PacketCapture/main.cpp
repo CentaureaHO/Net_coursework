@@ -30,8 +30,6 @@ void setNonCanonicalMode(bool enable)
 #include <conio.h>
 #endif
 
-#define GAP_TIME 500  // 500ms
-
 using namespace std;
 
 deque<vector<pair<struct pcap_pkthdr, vector<u_char>>>> packetQueue;
