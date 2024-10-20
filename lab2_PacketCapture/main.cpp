@@ -46,11 +46,11 @@ string formatTimestamp(const timeval& ts)
     time_t rawtime  = ts.tv_sec;
     tm*    timeinfo = localtime(&rawtime);
 
-    char buffer[30];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+    char buffer[20];
+    strftime(buffer, sizeof(buffer), "%m-%d %H:%M:%S", timeinfo);
 
     ostringstream oss;
-    oss << buffer << "." << setw(6) << setfill('0') << ts.tv_usec;
+    oss << buffer << "." << setw(2) << setfill('0') << (ts.tv_usec / 10000);
 
     return oss.str();
 }
@@ -72,8 +72,6 @@ void captureThread(NetDevice& netDevice)
             packetQueue.push_back(std::move(packets));
         }
         queueCondVar.notify_one();
-
-        this_thread::sleep_for(chrono::milliseconds(GAP_TIME));
     }
 }
 
@@ -86,16 +84,36 @@ void parsePackets(const vector<pair<struct pcap_pkthdr, vector<u_char>>>& packet
         oss << "Time: " << formattedTime << " | ";
 
         oss << "Src MAC: ";
-        for (int i = 6; i < 12; ++i)
-        {
-            oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 11 ? "" : ":");
-        }
+        for (int i = 6; i < 12; ++i) oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 11 ? "" : ":");
 
         oss << " -> Dest MAC: ";
-        for (int i = 0; i < 6; ++i) { oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 5 ? "" : ":"); }
+        for (int i = 0; i < 6; ++i) oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i == 5 ? "" : ":");
 
         uint16_t etherType = (packet[12] << 8) | packet[13];
         oss << " | Type: " << hex << setw(4) << setfill('0') << etherType;
+
+        if (etherType == 0x0800 && packet.size() >= 34)  // IPv4
+        {
+            oss << " | Src IP: ";
+            for (int i = 26; i < 30; ++i) { oss << dec << (int)packet[i] << (i == 29 ? "" : "."); }
+
+            oss << " -> Dest IP: ";
+            for (int i = 30; i < 34; ++i) { oss << dec << (int)packet[i] << (i == 33 ? "" : "."); }
+        }
+        else if (etherType == 0x86DD && packet.size() >= 54)  // IPv6
+        {
+            oss << " | Src IP: ";
+            for (int i = 22; i < 38; ++i)
+            {
+                oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i % 2 == 1 && i < 37 ? ":" : "");
+            }
+
+            oss << " -> Dest IP: ";
+            for (int i = 38; i < 54; ++i)
+            {
+                oss << hex << setw(2) << setfill('0') << (int)packet[i] << (i % 2 == 1 && i < 53 ? ":" : "");
+            }
+        }
 
         oss << "\n";
     }

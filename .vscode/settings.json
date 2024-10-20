@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.sy": "c",
+        "ios": "cpp"
+    }
+}
