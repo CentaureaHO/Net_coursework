@@ -2,6 +2,7 @@
 */bin/
 */err
 */note
+*/*.log
 
 lab2_PacketCapture/test.cpp
 lab2_PacketCapture/test

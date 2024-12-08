@@ -1,4 +1,5 @@
 #include <net/net_devs.h>
+#include <common/log.h>
 #include <cstring>
 #include <iostream>
 using namespace std;
@@ -33,14 +34,16 @@ DeviceManager::DeviceManager() : __devs(nullptr)
 
     if (pcap_findalldevs(&__devs, errbuf) == -1)
     {
-        cerr << "Error finding devices: " << errbuf << endl;
+        // cerr << "Error finding devices: " << errbuf << endl;
+        LOG_ERR(glb_logger, "Error finding devices: ", errbuf);
         exit(1);
     }
 
 #ifndef _WIN32
     if (getifaddrs(&__ifap) == -1)
     {
-        perror("getifaddrs");
+        // perror("getifaddrs");
+        LOG_ERR(glb_logger, "getifaddrs");
         pcap_freealldevs(__devs);
         exit(1);
     }
@@ -74,7 +77,8 @@ pcap_if_t* DeviceManager::getDeviceHandle(const string& deviceName)
 
     if (d == nullptr)
     {
-        cerr << "Device " << deviceName << " not found." << endl;
+        // cerr << "Device " << deviceName << " not found." << endl;
+        LOG_ERR(glb_logger, "Device ", deviceName, " not found.");
         return nullptr;
     }
 
@@ -100,8 +104,9 @@ pcap_if_t* DeviceManager::getDeviceHandle()
     index = -1;
     while (index < 0 || index >= static_cast<int>(deviceList.size()))
     {
-        cout << "Enter a device number: ";
+        cout << "Enter a device number(or -1 to quit): ";
         cin >> index;
+        if (index == -1) return nullptr;
     }
 
     return deviceList[index];
@@ -118,11 +123,13 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
     DWORD dwRetVal = 0;
 
     do {
-        cout << "Allocating memory for adapter information..." << endl;
+        // cout << "Allocating memory for adapter information..." << endl;
+        LOG(glb_logger, "Allocating memory for adapter information...");
         adapterAddresses = (IP_ADAPTER_ADDRESSES*)malloc(bufferSize);
         if (adapterAddresses == nullptr)
         {
-            cerr << "Memory allocation failed for IP_ADAPTER_ADDRESSES struct" << endl;
+            // cerr << "Memory allocation failed for IP_ADAPTER_ADDRESSES struct" << endl;
+            LOG_ERR(glb_logger, "Memory allocation failed for IP_ADAPTER_ADDRESSES struct");
             return;
         }
 
@@ -138,18 +145,17 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
 
     if (dwRetVal != NO_ERROR)
     {
-        cerr << "GetAdaptersAddresses() failed with error: " << dwRetVal << endl;
+        // cerr << "GetAdaptersAddresses() failed with error: " << dwRetVal << endl;
+        LOG_ERR(glb_logger, "GetAdaptersAddresses() failed with error: ", dwRetVal);
         if (adapterAddresses) free(adapterAddresses);
         return;
     }
 
-    // 提取 GUID
     string dev_guid = extract_guid(dev->name);
 
     PIP_ADAPTER_ADDRESSES adapter = adapterAddresses;
     while (adapter)
     {
-        // 如果指定了设备名称，则只处理匹配的适配器
         if (!dev_guid.empty() && _stricmp(adapter->AdapterName, dev_guid.c_str()) != 0)
         {
             adapter = adapter->Next;
@@ -179,7 +185,6 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
     if (adapterAddresses) free(adapterAddresses);
 
 #else
-    // POSIX 实现保持不变
     struct ifaddrs*     ifa = __ifap;
     struct sockaddr_in* sa  = nullptr;
     char                ip_str[INET_ADDRSTRLEN];
@@ -217,7 +222,8 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
             uint8_t hi, mi, lo, la;
             if (sscanf(mask_str, "%hhu.%hhu.%hhu.%hhu", &hi, &mi, &lo, &la) != 4)
             {
-                cerr << "Error parsing netmask" << endl;
+                // cerr << "Error parsing netmask" << endl;
+                LOG_ERR(glb_logger, "Error parsing netmask: ", mask_str);
                 ifa = ifa->ifa_next;
                 continue;
             }
@@ -245,4 +251,4 @@ namespace
 
 pcap_if_t* getDevice(string dev_name) { return manager.getDeviceHandle(dev_name); }
 pcap_if_t* getDevice() { return manager.getDeviceHandle(); }
-void getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& ips) { manager.getLocalIPs(dev, ips); }
+void       getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& ips) { manager.getLocalIPs(dev, ips); }

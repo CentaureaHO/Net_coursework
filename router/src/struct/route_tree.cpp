@@ -1,4 +1,5 @@
 #include <struct/route_tree.h>
+#include <common/log.h>
 #include <net/net_devs.h>
 #include <iostream>
 #include <iomanip>
@@ -188,7 +189,8 @@ void RouteTree::__init(pcap_if_t* dev)
 
     for (auto& [ip, mask] : ips)
     {
-        cout << "Add Direct Route: " << ip << "/" << static_cast<int>(mask) << endl;
+        // cout << "Add Direct Route: " << ip << "/" << static_cast<int>(mask) << endl;
+        LOG(glb_logger, "Add Direct Route: ", ip.c_str(), "/", static_cast<int>(mask));
         __add_route(ip, mask, "Direct");
     }
 }
@@ -197,7 +199,8 @@ void RouteTree::update_device(pcap_if_t* dev)
 {
     if (!dev) return;
 
-    cout << "Update Route Table: " << name << ", clear all routes." << endl;
+    // cout << "Update Route Table: " << name << ", clear all routes." << endl;
+    LOG(glb_logger, "Update Route Table: ", name.c_str(), ", clear all routes.");
     delete root;
     root = nullptr;
     root = new Node();
@@ -207,7 +210,8 @@ void RouteTree::update_device(pcap_if_t* dev)
 
     for (auto& [ip, mask] : ips)
     {
-        cout << "Add Direct Route: " << ip << "/" << static_cast<int>(mask) << endl;
+        // cout << "Add Direct Route: " << ip << "/" << static_cast<int>(mask) << endl;
+        LOG(glb_logger, "Add Direct Route: ", ip.c_str(), "/", static_cast<int>(mask));
         __add_route(ip, mask, "Direct");
     }
 }
