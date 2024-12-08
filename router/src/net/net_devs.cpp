@@ -16,8 +16,10 @@ class DeviceManager
     DeviceManager& operator=(const DeviceManager&) = delete;
 
   private:
-    pcap_if_t*      __devs;
+    pcap_if_t* __devs;
+#ifndef _WIN32
     struct ifaddrs* __ifap;
+#endif
 
   public:
     pcap_if_t* getDeviceHandle(const string& deviceName);
@@ -25,7 +27,7 @@ class DeviceManager
     void       getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& ips);
 };
 
-DeviceManager::DeviceManager() : __devs(nullptr), __ifap(nullptr)
+DeviceManager::DeviceManager() : __devs(nullptr)
 {
     char errbuf[PCAP_ERRBUF_SIZE];
 
@@ -35,20 +37,27 @@ DeviceManager::DeviceManager() : __devs(nullptr), __ifap(nullptr)
         exit(1);
     }
 
+#ifndef _WIN32
     if (getifaddrs(&__ifap) == -1)
     {
         perror("getifaddrs");
         pcap_freealldevs(__devs);
         exit(1);
     }
+#endif
 }
+
 DeviceManager::~DeviceManager()
 {
     if (__devs) pcap_freealldevs(__devs);
+#ifndef _WIN32
     if (__ifap) freeifaddrs(__ifap);
+#endif
 
     __devs = nullptr;
+#ifndef _WIN32
     __ifap = nullptr;
+#endif
 }
 
 DeviceManager& DeviceManager::getInstance()
@@ -100,6 +109,77 @@ pcap_if_t* DeviceManager::getDeviceHandle()
 
 void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& ips)
 {
+#ifdef _WIN32
+    ULONG                 flags            = GAA_FLAG_INCLUDE_PREFIX;
+    ULONG                 family           = AF_INET;
+    ULONG                 bufferSize       = 15000;
+    PIP_ADAPTER_ADDRESSES adapterAddresses = nullptr;
+
+    DWORD dwRetVal = 0;
+
+    do {
+        cout << "Allocating memory for adapter information..." << endl;
+        adapterAddresses = (IP_ADAPTER_ADDRESSES*)malloc(bufferSize);
+        if (adapterAddresses == nullptr)
+        {
+            cerr << "Memory allocation failed for IP_ADAPTER_ADDRESSES struct" << endl;
+            return;
+        }
+
+        dwRetVal = GetAdaptersAddresses(family, flags, nullptr, adapterAddresses, &bufferSize);
+
+        if (dwRetVal == ERROR_BUFFER_OVERFLOW)
+        {
+            free(adapterAddresses);
+            adapterAddresses = nullptr;
+        }
+        else { break; }
+    } while (dwRetVal == ERROR_BUFFER_OVERFLOW);
+
+    if (dwRetVal != NO_ERROR)
+    {
+        cerr << "GetAdaptersAddresses() failed with error: " << dwRetVal << endl;
+        if (adapterAddresses) free(adapterAddresses);
+        return;
+    }
+
+    // 提取 GUID
+    string dev_guid = extract_guid(dev->name);
+
+    PIP_ADAPTER_ADDRESSES adapter = adapterAddresses;
+    while (adapter)
+    {
+        // 如果指定了设备名称，则只处理匹配的适配器
+        if (!dev_guid.empty() && _stricmp(adapter->AdapterName, dev_guid.c_str()) != 0)
+        {
+            adapter = adapter->Next;
+            continue;
+        }
+
+        PIP_ADAPTER_UNICAST_ADDRESS unicast = adapter->FirstUnicastAddress;
+        while (unicast)
+        {
+            if (unicast->Address.lpSockaddr->sa_family == AF_INET)
+            {
+                char         ip_str[INET_ADDRSTRLEN];
+                sockaddr_in* sa = (sockaddr_in*)unicast->Address.lpSockaddr;
+                if (inet_ntop(AF_INET, &(sa->sin_addr), ip_str, sizeof(ip_str)) == nullptr) { perror("inet_ntop"); }
+                else
+                {
+                    uint8_t prefixLength = unicast->OnLinkPrefixLength;
+                    ips.emplace_back(string(ip_str), prefixLength);
+                }
+            }
+            unicast = unicast->Next;
+        }
+
+        adapter = adapter->Next;
+    }
+
+    if (adapterAddresses) free(adapterAddresses);
+
+#else
+    // POSIX 实现保持不变
     struct ifaddrs*     ifa = __ifap;
     struct sockaddr_in* sa  = nullptr;
     char                ip_str[INET_ADDRSTRLEN];
@@ -145,7 +225,7 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
             uint32_t mask_int = (hi << 24) | (mi << 16) | (lo << 8) | la;
             uint8_t& cnt      = ip.second;
             cnt               = 0;
-            for (mi = 31; mi < 32; --mi)
+            for (int mi = 31; mi >= 0; --mi)
             {
                 if (mask_int & (1 << mi))
                     ++cnt;
@@ -155,6 +235,7 @@ void DeviceManager::getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& i
         }
         ifa = ifa->ifa_next;
     }
+#endif
 }
 
 namespace
@@ -164,4 +245,4 @@ namespace
 
 pcap_if_t* getDevice(string dev_name) { return manager.getDeviceHandle(dev_name); }
 pcap_if_t* getDevice() { return manager.getDeviceHandle(); }
-void getLocalIPs(pcap_if_t* dev, std::vector<std::pair<std::string, uint8_t>>& ips) { manager.getLocalIPs(dev, ips); }
+void getLocalIPs(pcap_if_t* dev, vector<pair<string, uint8_t>>& ips) { manager.getLocalIPs(dev, ips); }

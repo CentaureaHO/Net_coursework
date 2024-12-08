@@ -37,3 +37,13 @@ namespace
 {
     SocketInitializer& socket_initializer = SocketInitializer::getInstance();
 }
+
+#ifdef _WIN32
+string extract_guid(const string& dev_name)
+{
+    size_t start = dev_name.find('{');
+    size_t end   = dev_name.find('}', start);
+    if (start != string::npos && end != string::npos) { return dev_name.substr(start, end - start + 1); }
+    return "";
+}
+#endif

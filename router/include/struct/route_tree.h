@@ -1,11 +1,12 @@
 #ifndef __STRUCT_ROUTE_TREE_H__
 #define __STRUCT_ROUTE_TREE_H__
 
+#include <winsock2.h>
 #include <pcap.h>
 #include <iterator>
-#include <string>
 #include <stack>
 #include <stdint.h>
+#include <string>
 
 class RouteTree
 {
@@ -37,8 +38,16 @@ class RouteTree
         friend class RouteTree;
     };
 
-    class Iterator : public std::iterator<std::forward_iterator_tag, Route>
+    class Iterator
     {
+      public:
+        // 定义必要的类型别名
+        using iterator_category = std::forward_iterator_tag;
+        using value_type        = Route;
+        using difference_type   = std::ptrdiff_t;
+        using pointer           = Route*;
+        using reference         = Route&;
+
       private:
         struct StackFrame
         {

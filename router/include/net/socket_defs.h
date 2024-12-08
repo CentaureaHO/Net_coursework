@@ -3,12 +3,14 @@
 
 #ifdef _WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#include <iphlpapi.h>
 #include <winsock2.h>
+#include <iphlpapi.h>
 #include <ws2tcpip.h>
+#include <string>
 using socklen_t = int;
 #define CLOSE_SOCKET(s) closesocket(s)
 #define SOCKCLEANUP() WSACleanup()
+std::string extract_guid(const std::string& dev_name);
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>

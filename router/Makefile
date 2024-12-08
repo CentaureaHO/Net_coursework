@@ -10,13 +10,22 @@ OBJ_DIR := obj
 BIN_DIR := bin
 
 ifeq ($(OS),Windows_NT)
-    LDFLAGS := -lws2_32 -lnpcap
-    SOURCES := $(shell find $(SRC_DIR)/ -name '*.cpp' -o -name '*.c')
+    LDFLAGS := -lws2_32 -lwpcap -lpacket -liphlpapi
+    SOURCES := $(SRC_DIR)/common/lock.cpp $(SRC_DIR)/common/log.cpp
+    SOURCES += $(SRC_DIR)/net/net_devs.cpp $(SRC_DIR)/net/socket_defs.cpp
+    SOURCES += $(SRC_DIR)/struct/route_tree.cpp
+    MKDIR := powershell -Command "New-Item -ItemType Directory -Force"
+    RMDIR := powershell -Command "Remove-Item -Recurse -Force"
+    RM := del /F /Q
 else
     LDFLAGS := -lpcap
     SOURCES := $(shell find $(SRC_DIR)/ -name '*.cpp' -o -name '*.c')
+    MKDIR := mkdir -p
+    RMDIR := rm -rf
+    RM := rm -f
 endif
 
+CXXFLAGS := $(CXX_STANDARD) $(DBGFLAGS) $(OPTIMIZE_FLAGS) $(WERROR_FLAGS) -I$(INCLUDE_DIR)
 OBJECTS := $(patsubst $(SRC_DIR)/%, $(OBJ_DIR)/%, $(SOURCES:.cpp=.o))
 
 .PHONY: all 
@@ -25,21 +34,23 @@ all: bin
 .PHONY: obj
 obj: $(OBJECTS)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_STANDARD) $(WERROR_FLAGS) -I$(INCLUDE_DIR) -c $< -o $@
+	$(MKDIR) $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_STANDARD) $(WERROR_FLAGS) -I$(INCLUDE_DIR) -c $< -o $@
+	$(MKDIR) $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 .PHONY: bin
-bin: obj
-	@mkdir -p $(BIN_DIR)
-	$(CXX) $(CXX_STANDARD) $(OPTIMIZE_FLAGS) $(WERROR_FLAGS) -I$(INCLUDE_DIR) main.cpp $(OBJECTS) -o $(BIN_DIR)/router $(LDFLAGS)
+bin: $(BIN_DIR)/router
+$(BIN_DIR)/router: main.cpp $(OBJECTS)
+	$(MKDIR) $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) main.cpp $(OBJECTS) -o $(BIN_DIR)/router $(LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	$(RMDIR) $(OBJ_DIR)
+	$(RMDIR) $(BIN_DIR)
 
 .PHONY: format
 format:
