@@ -263,6 +263,16 @@ uint8_t RouteTree::remove_route(const string& ip, uint8_t mask)
     return root->__remove_route(ip_int, left_level, high);
 }
 
+string RouteTree::lookup(const uint32_t& ip, uint8_t mask)
+{
+    uint8_t  left_level = mask;
+    uint8_t  high       = 31;
+    string*  best_match = nullptr;
+    root->__lookup(ip, left_level, high, best_match);
+    if (best_match) return *best_match;
+    if (root->next_jump) return *root->next_jump;
+    return "";
+}
 string RouteTree::lookup(const string& ip, uint8_t mask)
 {
     uint8_t hi = 0, mi = 0, lo = 0, la = 0;

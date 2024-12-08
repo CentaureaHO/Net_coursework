@@ -33,12 +33,11 @@ struct IPFrame
     IPHeader  ip_header;   // IP 头部
 };
 
-struct ICMPFrame
+struct ICMPHeader
 {
-    IPFrame  header;          // IP 数据包头部
     uint8_t  type;            // ICMP 类型
     uint8_t  code;            // ICMP 代码
-    uint16_t crc;             // 校验和
+    uint16_t checksum;        // 校验和
     uint16_t identification;  // 标识符
     uint16_t seq;             // 序列号
 };
@@ -59,6 +58,10 @@ struct ARPFrame
 
 #pragma pack()
 
+#define IS_BROADCAST_FRAME(eth_header)                                                                  \
+    (eth_header.des_mac[0] == 0xFF && eth_header.des_mac[1] == 0xFF && eth_header.des_mac[2] == 0xFF && \
+        eth_header.des_mac[3] == 0xFF && eth_header.des_mac[4] == 0xFF && eth_header.des_mac[5] == 0xFF)
+
 #define MAKE_ARP(arp_frame)                              \
     {                                                    \
         arp_frame.eth_header.frame_type = htons(0x0806); \
@@ -69,6 +72,10 @@ struct ARPFrame
         arp_frame.operation             = htons(0x0001); \
     }
 
-char* iptos(uint64_t in);
+char*    iptos(uint64_t in);
+uint16_t genCheckSum(IPFrame& packet);
+bool     checkCheckSum(IPFrame& packet);
+uint16_t genCheckSum(ICMPHeader& packet);
+bool     checkCheckSum(ICMPHeader& packet);
 
 #endif

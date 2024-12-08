@@ -24,6 +24,7 @@ bool Logger::openLogFile()
             cerr << "无法打开日志文件!" << endl;
             return false;
         }
+        logFile_ << '\n';
         logFileOpened_ = true;
     }
     return true;

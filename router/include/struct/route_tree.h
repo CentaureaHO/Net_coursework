@@ -106,6 +106,7 @@ class RouteTree
      * 空串：未找到，且无默认路由
      * 非空：下一跳地址
      */
+    std::string lookup(const uint32_t& ip, uint8_t mask);
     std::string lookup(const std::string& ip, uint8_t mask);
 
     void print() const;

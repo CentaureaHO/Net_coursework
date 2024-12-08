@@ -70,28 +70,6 @@ namespace
     MemControl& memControl = MemControl::getInstance();
 }  // anonymous namespace
 
-void packet_handler(u_char* args, const struct pcap_pkthdr* header, const u_char* packet)
-{
-    (void)args;
-    (void)packet;
-    LOG(packet_logger, "捕获到一个数据包：\n数据包长度: ", header->len, " 字节\n数据内容: passed");
-}
-
-void capture_packets(pcap_t* handle)
-{
-    while (running)
-    {
-        int ret = pcap_dispatch(handle, 1, packet_handler, nullptr);
-        if (ret == -1)
-        {
-            LOG_ERR(glb_logger, "pcap_dispatch failed: ", pcap_geterr(handle));
-            break;
-        }
-        else if (ret == 0)
-            continue;
-    }
-}
-
 bool get_mac(const string& ip, uint8_t* mac)
 {
     for (auto& [local_ip, mask] : local_ips)
@@ -132,7 +110,8 @@ bool get_mac(const string& ip, uint8_t* mac)
         if (res == 0) continue;
 
         data = (ARPFrame*)buffer_data;
-        if (iptos(data->send_ip) != ip) continue;
+        if (iptos(data->send_ip) != ip) continue;        // Not the target ip
+        if (data->operation != htons(0x0002)) continue;  // Not ARP reply
         for (size_t i = 0; i < 6; ++i) mac[i] = data->eth_header.src_mac[i];
         break;
     }
@@ -177,6 +156,112 @@ uint8_t strMask2num(const string& str_mask)
             break;
     }
     return cnt;
+}
+
+void packet_handler()
+{
+    EthHeader* eth_header = (EthHeader*)buffer_data;
+    if (memcmp(eth_header->des_mac, local_mac, 6) != 0) return;  // Handle packets sent to this device only
+    if (ntohs(eth_header->frame_type) == 0x0806)
+    {
+        ARPFrame* arp_frame = (ARPFrame*)buffer_data;
+        if (arp_frame->operation == htons(0x0001))
+        {
+            // ARP request
+            ARPFrame reply_frame;
+            MAKE_ARP(reply_frame);
+            for (size_t i = 0; i < 6; ++i)
+            {
+                reply_frame.eth_header.des_mac[i] = arp_frame->send_ha[i];
+                reply_frame.eth_header.src_mac[i] = local_mac[i];
+                reply_frame.send_ha[i]            = local_mac[i];
+                reply_frame.recv_ha[i]            = arp_frame->send_ha[i];
+            }
+            reply_frame.send_ip = inet_addr(local_ip.c_str());
+            reply_frame.recv_ip = arp_frame->send_ip;
+
+            pcap_sendpacket(handle, (u_char*)&reply_frame, sizeof(ARPFrame));
+        }
+        else if (arp_frame->operation == htons(0x0002))
+        {
+            cout << "Capture ARP reply\n";
+            arp_table->insert(iptos(arp_frame->send_ip), arp_frame->send_ha);
+        }
+        return;
+    }
+    if (ntohs(eth_header->frame_type) != 0x0800) return;  // Handle ARP or IPv4 packets only
+
+    IPFrame* ip_frame = (IPFrame*)buffer_data;
+
+    if (!checkCheckSum(*ip_frame))
+    {
+        // todo: log error
+        return;
+    }
+    if (ip_frame->ip_header.ttl <= 1)
+    {
+        // todo: send icmp time exceeded
+        return;
+    }
+
+    bool send_to_here = false;
+    for (auto& [local_ip, mask] : local_ips)
+    {
+        if (ip_frame->ip_header.dst_ip == inet_addr(local_ip.c_str()))
+        {
+            send_to_here = true;
+            break;
+        }
+    }
+
+    if (send_to_here) return;                              // No need to handle packets sent to this device
+    if (IS_BROADCAST_FRAME(ip_frame->eth_header)) return;  // No need to handle broadcast packets
+
+    string next_jump = route_tree->lookup(ip_frame->ip_header.dst_ip, 32);
+    if (next_jump == "") return;  // No route to destination
+
+    if (next_jump == "Direct")
+    {
+        struct in_addr addr;
+        addr.s_addr = ip_frame->ip_header.dst_ip;
+        next_jump   = string(inet_ntoa(addr));
+    }
+
+    if (!get_mac(next_jump, mac_buffer)) return;  // Failed to get mac
+
+    --ip_frame->ip_header.ttl;
+    for (size_t i = 0; i < 6; ++i)
+    {
+        ip_frame->eth_header.src_mac[i] = local_mac[i];
+        ip_frame->eth_header.des_mac[i] = mac_buffer[i];
+    }
+    genCheckSum(*ip_frame);
+    size_t data_len = ntohs(ip_frame->ip_header.total_len) + sizeof(EthHeader);
+    if (!pcap_sendpacket(handle, (u_char*)ip_frame, data_len))
+    {
+        // TODO: log
+    }
+    else
+    {
+        // TODO: log err
+    }
+}
+
+void capture_packets(pcap_t* handle)
+{
+    while (running)
+    {
+        if ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
+        {
+            if (res == 0) continue;
+            packet_handler();
+        }
+        else
+        {
+            LOG_ERR(glb_logger, "Failed to capture packets: ", pcap_geterr(handle));
+            break;
+        }
+    }
 }
 
 int main()
@@ -269,9 +354,16 @@ int main()
     route_tree = new RouteTree(dev);
     arp_table  = new ARP_Table();
 
+#ifndef DBG_ARP
+    thread packet_thread(capture_packets, handle);
+#endif
+
     int     choice = 0;
     string  ip, mask, next_jump;
     uint8_t mask_num = 0, res = 0;
+#ifdef DBG_ARP
+    uint8_t mac[6];
+#endif
     while (true)
     {
         cout << "Options: \n"
@@ -280,6 +372,9 @@ int main()
              << "\t2. Delete route\n"
              << "\t3. Print route table\n"
              << "\t4. Print ARP table\n"
+#ifdef DBG_ARP
+             << "\t5. Request ARP\n"
+#endif
              << "Enter choice: ";
         cin >> choice;
         if (choice == 0) break;
@@ -337,33 +432,30 @@ int main()
                 print_mac_table();
                 cout << '\n';
                 break;
+#ifdef DBG_ARP
+            case 5:
+            {
+                cout << "Enter ip: ";
+                cin >> ip;
+                if (get_mac(ip, mac))
+                {
+                    cout << "MAC: ";
+                    printf("%02X-%02X-%02X-%02X-%02X-%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                }
+                else
+                    cout << "Failed to get mac\n";
+                break;
+            }
+#endif
             default: cout << "Invalid choice\n"; break;
         }
     }
 
-    /*
-        string  remote_ip = "";
-        uint8_t remote_mac[6];
-        while (true)
-        {
-            cout << "请输入目标IP地址(q to quit): ";
-            cin >> remote_ip;
-            if (remote_ip == "q") break;
-
-            get_mac(remote_ip, remote_mac);
-            print_mac_table();
-        }
-
-        thread capture_thread(capture_packets, handle);
-
-        cout << "开始捕获数据包。按回车键停止。" << endl;
-        cin.ignore();
-        cin.get();
-        running = false;
-    */
-
-    // 清理资源
-    // capture_thread.join();
+    // 资源受RALL管理，不需要在此处释放
+    running = false;
+#ifndef DBG_ARP
+    packet_thread.join();
+#endif
     LOG(glb_logger, "Router End");
     return 0;
 }
