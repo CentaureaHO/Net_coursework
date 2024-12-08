@@ -69,27 +69,20 @@ uint8_t RouteTree::Node::__remove_route(const uint32_t& ip, uint8_t& left_level,
     return 1;
 }
 
-string* RouteTree::Node::__lookup(const uint32_t& ip, uint8_t& left_level, uint8_t& high)
+string* RouteTree::Node::__lookup(const uint32_t& ip, uint8_t& left_level, uint8_t& high, string*& best_match)
 {
-    if (left_level == 0)
-    {
-        if (next_jump) return next_jump;
-        return nullptr;
-    }
-
+    if (next_jump) best_match = next_jump;
+    if (left_level == 0) return best_match;
     bool bit = ip & (1 << high);
     if (bit)
     {
-        if (!right) return nullptr;
-        return right->__lookup(ip, --left_level, --high);
+        if (right) return right->__lookup(ip, --left_level, --high, best_match);
     }
     else
     {
-        if (!left) return nullptr;
-        return left->__lookup(ip, --left_level, --high);
+        if (left) return left->__lookup(ip, --left_level, --high, best_match);
     }
-
-    return nullptr;
+    return best_match;
 }
 
 RouteTree::Iterator::Iterator() : has_current(false) {}
@@ -266,14 +259,12 @@ string RouteTree::lookup(const string& ip, uint8_t mask)
 {
     uint8_t hi = 0, mi = 0, lo = 0, la = 0;
     if (sscanf(ip.c_str(), "%hhu.%hhu.%hhu.%hhu", &hi, &mi, &lo, &la) != 4) return "";
-
     uint32_t ip_int     = (hi << 24) | (mi << 16) | (lo << 8) | la;
     uint8_t  left_level = mask;
     uint8_t  high       = 31;
-
-    string* res = root->__lookup(ip_int, left_level, high);
-
-    if (res) return *res;
+    string*  best_match = nullptr;
+    root->__lookup(ip_int, left_level, high, best_match);
+    if (best_match) return *best_match;
     if (root->next_jump) return *root->next_jump;
     return "";
 }

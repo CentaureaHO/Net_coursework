@@ -1,7 +1,6 @@
 #ifndef __STRUCT_ROUTE_TREE_H__
 #define __STRUCT_ROUTE_TREE_H__
 
-#include <winsock2.h>
 #include <pcap.h>
 #include <iterator>
 #include <stack>
@@ -32,7 +31,7 @@ class RouteTree
       private:
         uint8_t      __add_route(const uint32_t& ip, const std::string& n_j, uint8_t& left_level, uint8_t& high);
         uint8_t      __remove_route(const uint32_t& ip, uint8_t& left_level, uint8_t& high);
-        std::string* __lookup(const uint32_t& ip, uint8_t& left_level, uint8_t& high);
+        std::string* __lookup(const uint32_t& ip, uint8_t& left_level, uint8_t& high, std::string*& best_match);
         void         clear_routes();
 
         friend class RouteTree;
