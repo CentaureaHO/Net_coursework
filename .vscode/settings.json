@@ -107,6 +107,7 @@
         "__debug": "cpp",
         "__tuple": "cpp",
         "__mutex_base": "cpp",
-        "__string": "cpp"
+        "__string": "cpp",
+        "print": "cpp"
     }
 }

@@ -84,7 +84,7 @@ void capture_packets(pcap_t* handle)
         int ret = pcap_dispatch(handle, 1, packet_handler, nullptr);
         if (ret == -1)
         {
-            LOG_ERR(glb_logger, "pcap_dispatch 失败: ", pcap_geterr(handle));
+            LOG_ERR(glb_logger, "pcap_dispatch failed: ", pcap_geterr(handle));
             break;
         }
         else if (ret == 0)
@@ -117,14 +117,14 @@ bool get_mac(const string& ip, uint8_t* mac)
 
     pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
 
-    ARPFrame*                         data  = nullptr;
+    ARPFrame*                        data  = nullptr;
     chrono::steady_clock::time_point start = chrono::steady_clock::now();
     chrono::steady_clock::time_point now   = start;
     while ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
     {
         if (now - start > chrono::seconds(5))
         {
-            LOG_ERR(glb_logger, "获取MAC地址失败: ", pcap_geterr(handle));
+            LOG_ERR(glb_logger, "Failed to get mac for ", ip, ": ", pcap_geterr(handle));
             return false;
         }
         now = chrono::steady_clock::now();
@@ -143,7 +143,7 @@ bool get_mac(const string& ip, uint8_t* mac)
 
 void print_mac_table()
 {
-    cout << "ARP map: \n";
+    cout << "ARP table: \n";
     for (auto& [ip, mask] : local_ips)
     {
         printf("\t(local) %s -> %02X-%02X-%02X-%02X-%02X-%02X\n",
@@ -158,6 +158,27 @@ void print_mac_table()
     arp_table->print();
 }
 
+uint8_t strMask2num(const string& str_mask)
+{
+    uint8_t hi, mi, lo, la;
+    if (sscanf(str_mask.c_str(), "%hhu.%hhu.%hhu.%hhu", &hi, &mi, &lo, &la) != 4)
+    {
+        LOG_ERR(glb_logger, "Error parsing netmask: ", str_mask);
+        return 255;
+    }
+
+    uint32_t mask_int = (hi << 24) | (mi << 16) | (lo << 8) | la;
+    uint8_t  cnt      = 0;
+    for (int mi = 31; mi >= 0; --mi)
+    {
+        if (mask_int & (1 << mi))
+            ++cnt;
+        else
+            break;
+    }
+    return cnt;
+}
+
 int main()
 {
     LOG(glb_logger, "Router Start");
@@ -165,7 +186,7 @@ int main()
     dev = getDevice();
     if (!dev)
     {
-        LOG_ERR(glb_logger, "Global: 未获取到设备");
+        LOG_ERR(glb_logger, "Failed to get device");
         LOG(glb_logger, "Router End");
         return 1;
     }
@@ -173,13 +194,13 @@ int main()
     getLocalIPs(dev, local_ips);
     if (local_ips.empty())
     {
-        LOG_ERR(glb_logger, "Global: 未获取到本地IP地址");
+        LOG_ERR(glb_logger, "Failed to get local ips");
         LOG(glb_logger, "Router End");
         return 2;
     }
     local_ip = local_ips[0].first;
     stringstream log_stream;
-    log_stream << "Global: 获取到本地IP地址: \n";
+    log_stream << "Get local ips: \n";
     for (size_t i = 0; i < local_ips.size() - 1; ++i)
         log_stream << "\t" << i + 1 << ". IP: " << local_ips[i].first << "/" << (int)local_ips[i].second << '\n';
     log_stream << "\t" << local_ips.size() << ". IP: " << local_ips.back().first << "/" << (int)local_ips.back().second;
@@ -191,7 +212,7 @@ int main()
     handle = pcap_open_live(dev->name, 65535, 1, 1000, errbuf);
     if (!handle)
     {
-        LOG_ERR(glb_logger, "Global: 开启设备失败: ", errbuf);
+        LOG_ERR(glb_logger, "Faile to open device: ", errbuf);
         LOG(glb_logger, "Router End");
         return 3;
     }
@@ -228,7 +249,7 @@ int main()
 
         for (size_t i = 0; i < 6; ++i) local_mac[i] = data->eth_header.src_mac[i];
 
-        printf("获取到本地MAC地址: %02X-%02X-%02X-%02X-%02X-%02X\n",
+        printf("Get local mac: %02X-%02X-%02X-%02X-%02X-%02X\n",
             local_mac[0],
             local_mac[1],
             local_mac[2],
@@ -239,7 +260,7 @@ int main()
     }
     if (!success)
     {
-        LOG_ERR(glb_logger, "获取本地MAC地址失败: ", pcap_geterr(handle));
+        LOG_ERR(glb_logger, "Failed to get local mac: ", pcap_geterr(handle));
         LOG(glb_logger, "Router End");
         return 4;
     }
@@ -248,27 +269,101 @@ int main()
     route_tree = new RouteTree(dev);
     arp_table  = new ARP_Table();
 
-    string  remote_ip = "";
-    uint8_t remote_mac[6];
+    int     choice = 0;
+    string  ip, mask, next_jump;
+    uint8_t mask_num = 0, res = 0;
     while (true)
     {
-        cout << "请输入目标IP地址(q to quit): ";
-        cin >> remote_ip;
-        if (remote_ip == "q") break;
+        cout << "Options: \n"
+             << "\t0. Close router\n"
+             << "\t1. Add route\n"
+             << "\t2. Delete route\n"
+             << "\t3. Print route table\n"
+             << "\t4. Print ARP table\n"
+             << "Enter choice: ";
+        cin >> choice;
+        if (choice == 0) break;
+        switch (choice)
+        {
+            case 1:
+            {
+                cout << "Enter 'ip mask next_jump': ";
+                cin >> ip >> mask >> next_jump;
+                mask_num = strMask2num(mask);
+                if (mask_num > 32)
+                {
+                    cout << "Invalid mask\n";
+                    break;
+                }
 
-        get_mac(remote_ip, remote_mac);
-        print_mac_table();
+                res = route_tree->add_route(ip, mask_num, next_jump);
+                if (res == 0)
+                    cout << "Add route successfully\n";
+                else if (res == 1)
+                    cout << "Modify route successfully\n";
+                else
+                    cout << "Cannot modify direct route\n";
+
+                break;
+            }
+            case 2:
+            {
+                cout << "Enter 'ip mask': ";
+                cin >> ip >> mask;
+                mask_num = strMask2num(mask);
+                if (mask_num > 32)
+                {
+                    cout << "Invalid mask\n";
+                    break;
+                }
+
+                res = route_tree->remove_route(ip, mask_num);
+                if (res == 0)
+                    cout << "Remove route successfully\n";
+                else if (res == 1)
+                    cout << "Remove route failed\n";
+                else
+                    cout << "Cannot remove direct route\n";
+
+                break;
+            }
+            case 3:
+                cout << '\n';
+                route_tree->print();
+                cout << '\n';
+                break;
+            case 4:
+                cout << '\n';
+                print_mac_table();
+                cout << '\n';
+                break;
+            default: cout << "Invalid choice\n"; break;
+        }
     }
 
-    thread capture_thread(capture_packets, handle);
+    /*
+        string  remote_ip = "";
+        uint8_t remote_mac[6];
+        while (true)
+        {
+            cout << "请输入目标IP地址(q to quit): ";
+            cin >> remote_ip;
+            if (remote_ip == "q") break;
 
-    cout << "开始捕获数据包。按回车键停止。" << endl;
-    cin.ignore();
-    cin.get();
-    running = false;
+            get_mac(remote_ip, remote_mac);
+            print_mac_table();
+        }
+
+        thread capture_thread(capture_packets, handle);
+
+        cout << "开始捕获数据包。按回车键停止。" << endl;
+        cin.ignore();
+        cin.get();
+        running = false;
+    */
 
     // 清理资源
-    capture_thread.join();
+    // capture_thread.join();
     LOG(glb_logger, "Router End");
     return 0;
 }

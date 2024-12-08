@@ -72,7 +72,11 @@ uint8_t RouteTree::Node::__remove_route(const uint32_t& ip, uint8_t& left_level,
 
 string* RouteTree::Node::__lookup(const uint32_t& ip, uint8_t& left_level, uint8_t& high, string*& best_match)
 {
-    if (next_jump) best_match = next_jump;
+    if (next_jump)
+    {
+        best_match = next_jump;
+        if (*next_jump == "Direct") return best_match;
+    }
     if (left_level == 0) return best_match;
     bool bit = ip & (1 << high);
     if (bit)

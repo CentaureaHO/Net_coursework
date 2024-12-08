@@ -3,12 +3,15 @@
 using namespace std;
 using namespace chrono;
 
-ARP_Table::ARP_Table() : running(true), cleanup_thread(&ARP_Table::clean_outdated_entries, this) {}
+ARP_Table::ARP_Table(int tout) : timeout(tout), running(true), cleanup_thread(&ARP_Table::clean_outdated_entries, this)
+{}
 ARP_Table::~ARP_Table()
 {
     running = false;
     cleanup_thread.join();
 }
+
+void ARP_Table::set_timeout(int seconds) { timeout = seconds; }
 
 void ARP_Table::clean_outdated_entries()
 {
@@ -20,7 +23,7 @@ void ARP_Table::clean_outdated_entries()
             for (auto it = arp_table.begin(); it != arp_table.end();)
             {
                 auto duration = duration_cast<seconds>(now - it->second.timestamp);
-                if (duration.count() > 10)
+                if (duration.count() > timeout)
                     it = arp_table.erase(it);
                 else
                     ++it;

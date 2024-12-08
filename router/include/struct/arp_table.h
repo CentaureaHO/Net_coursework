@@ -23,14 +23,16 @@ class ARP_Table
   private:
     ReWrLock                               lock;
     std::unordered_map<std::string, Entry> arp_table;
+    std::atomic<int>                       timeout;
 
     std::atomic<bool> running;
     std::thread       cleanup_thread;
-    
 
   public:
-    ARP_Table();
+    ARP_Table(int tout = 5);
     ~ARP_Table();
+
+    void set_timeout(int seconds);
 
     void insert(const std::string& ip, const uint8_t* mac);
     bool lookup(const std::string& ip, uint8_t* mac);
