@@ -105,6 +105,8 @@
         "stacktrace": "cpp",
         "__config": "cpp",
         "__debug": "cpp",
-        "__tuple": "cpp"
+        "__tuple": "cpp",
+        "__mutex_base": "cpp",
+        "__string": "cpp"
     }
 }

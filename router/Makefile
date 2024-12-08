@@ -47,6 +47,12 @@ $(BIN_DIR)/router: main.cpp $(OBJECTS)
 	$(MKDIR) $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) main.cpp $(OBJECTS) -o $(BIN_DIR)/router $(LDFLAGS)
 
+.PHONY: test
+test: $(BIN_DIR)/test
+$(BIN_DIR)/test: test.cpp $(OBJECTS)
+	$(MKDIR) $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) test.cpp $(OBJECTS) -o $(BIN_DIR)/test $(LDFLAGS)
+
 .PHONY: clean
 clean:
 	$(RMDIR) $(OBJ_DIR)
