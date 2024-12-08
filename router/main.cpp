@@ -117,7 +117,7 @@ bool get_mac(const string& ip, uint8_t* mac)
 
     pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
 
-    IPFrame*                         data  = nullptr;
+    ARPFrame*                         data  = nullptr;
     chrono::steady_clock::time_point start = chrono::steady_clock::now();
     chrono::steady_clock::time_point now   = start;
     while ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
@@ -131,8 +131,8 @@ bool get_mac(const string& ip, uint8_t* mac)
 
         if (res == 0) continue;
 
-        data = (IPFrame*)buffer_data;
-        if (iptos(data->ip_header.src_ip) != ip) continue;
+        data = (ARPFrame*)buffer_data;
+        if (iptos(data->send_ip) != ip) continue;
         for (size_t i = 0; i < 6; ++i) mac[i] = data->eth_header.src_mac[i];
         break;
     }
@@ -250,9 +250,9 @@ int main()
 
     string  remote_ip = "";
     uint8_t remote_mac[6];
-    cout << "请输入目标IP地址(q to quit): ";
     while (true)
     {
+        cout << "请输入目标IP地址(q to quit): ";
         cin >> remote_ip;
         if (remote_ip == "q") break;
 

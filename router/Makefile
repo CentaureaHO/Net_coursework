@@ -12,8 +12,8 @@ BIN_DIR := bin
 ifeq ($(OS),Windows_NT)
     LDFLAGS := -lws2_32 -lwpcap -lpacket -liphlpapi
     SOURCES := $(SRC_DIR)/common/lock.cpp $(SRC_DIR)/common/log.cpp
-    SOURCES += $(SRC_DIR)/net/net_devs.cpp $(SRC_DIR)/net/socket_defs.cpp
-    SOURCES += $(SRC_DIR)/struct/route_tree.cpp
+    SOURCES += $(SRC_DIR)/net/net_devs.cpp $(SRC_DIR)/net/package.cpp $(SRC_DIR)/net/socket_defs.cpp
+    SOURCES += $(SRC_DIR)/struct/arp_table.cpp $(SRC_DIR)/struct/route_tree.cpp
     MKDIR := powershell -Command "New-Item -ItemType Directory -Force"
     RMDIR := powershell -Command "Remove-Item -Recurse -Force"
     RM := del /F /Q
