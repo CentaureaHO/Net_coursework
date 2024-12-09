@@ -95,17 +95,17 @@ bool get_mac(const string& ip, uint8_t* mac)
 
     pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
 
-    ARPFrame*                        data  = nullptr;
-    chrono::steady_clock::time_point start = chrono::steady_clock::now();
-    chrono::steady_clock::time_point now   = start;
+    ARPFrame* data = nullptr;
+    // chrono::steady_clock::time_point start = chrono::steady_clock::now();
+    // chrono::steady_clock::time_point now   = start;
     while ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
     {
-        if (now - start > chrono::seconds(5))
-        {
-            LOG_ERR(glb_logger, "Failed to get mac for ", ip, ": ", pcap_geterr(handle));
-            return false;
-        }
-        now = chrono::steady_clock::now();
+        // if (now - start > chrono::seconds(5))
+        //{
+        //     LOG_ERR(glb_logger, "Failed to get mac for ", ip, ": ", pcap_geterr(handle));
+        //     return false;
+        // }
+        // now = chrono::steady_clock::now();
 
         if (res == 0) continue;
 
@@ -161,9 +161,10 @@ uint8_t strMask2num(const string& str_mask)
 void packet_handler()
 {
     EthHeader* eth_header = (EthHeader*)buffer_data;
-    if (memcmp(eth_header->des_mac, local_mac, 6) != 0) return;  // Handle packets sent to this device only
+    // if (memcmp(eth_header->des_mac, local_mac, 6) != 0) return;  // Handle packets sent to this device only
     if (ntohs(eth_header->frame_type) == 0x0806)
     {
+        // LOG(packet_logger, "Capture a ARP packet");
         ARPFrame* arp_frame = (ARPFrame*)buffer_data;
         if (arp_frame->operation == htons(0x0001))
         {
@@ -184,12 +185,30 @@ void packet_handler()
         }
         else if (arp_frame->operation == htons(0x0002))
         {
-            cout << "Capture ARP reply\n";
+            // cout << "Capture ARP reply\n";
+            LOG(packet_logger,
+                "Capture a arp reply with ",
+                iptos(arp_frame->send_ip),
+                " -> ",
+                hex,
+                (int)arp_frame->send_ha[0],
+                "-",
+                (int)arp_frame->send_ha[1],
+                "-",
+                (int)arp_frame->send_ha[2],
+                "-",
+                (int)arp_frame->send_ha[3],
+                "-",
+                (int)arp_frame->send_ha[4],
+                "-",
+                (int)arp_frame->send_ha[5],
+                "; add to ARP table");
             arp_table->insert(iptos(arp_frame->send_ip), arp_frame->send_ha);
         }
         return;
     }
     if (ntohs(eth_header->frame_type) != 0x0800) return;  // Handle ARP or IPv4 packets only
+    // LOG(packet_logger, "Capture a IP packet");
 
     IPFrame* ip_frame = (IPFrame*)buffer_data;
 
@@ -218,7 +237,13 @@ void packet_handler()
     if (IS_BROADCAST_FRAME(ip_frame->eth_header)) return;  // No need to handle broadcast packets
 
     string next_jump = route_tree->lookup(ip_frame->ip_header.dst_ip, 32);
-    if (next_jump == "") return;  // No route to destination
+    if (next_jump == "")
+    {
+        // TODO: send icmp destination unreachable
+        return;
+    }
+
+    LOG(packet_logger, "Capture a packet to ", iptos(ip_frame->ip_header.dst_ip), ", find next jump: ", next_jump);
 
     if (next_jump == "Direct")
     {
@@ -239,10 +264,12 @@ void packet_handler()
     size_t data_len = ntohs(ip_frame->ip_header.total_len) + sizeof(EthHeader);
     if (!pcap_sendpacket(handle, (u_char*)ip_frame, data_len))
     {
+        cout << "Send packet to " << next_jump << '\n';
         // TODO: log
     }
     else
     {
+        cout << "Failed to send packet to " << next_jump << '\n';
         // TODO: log err
     }
 }
@@ -283,7 +310,7 @@ int main()
         LOG(glb_logger, "Router End");
         return 2;
     }
-    local_ip = local_ips[0].first;
+    local_ip = local_ips.back().first;
     stringstream log_stream;
     log_stream << "Get local ips: \n";
     for (size_t i = 0; i < local_ips.size() - 1; ++i)
@@ -294,7 +321,7 @@ int main()
     log_stream.str("");
     log_stream.clear();
 
-    handle = pcap_open_live(dev->name, 65535, 1, 1000, errbuf);
+    handle = pcap_open_live(dev->name, 65535, 0, 1000, errbuf);
     if (!handle)
     {
         LOG_ERR(glb_logger, "Faile to open device: ", errbuf);
@@ -302,7 +329,25 @@ int main()
         return 3;
     }
 
-    // 获取本地mac
+    struct bpf_program fp;
+    const char*        filter_exp = "arp or ip";
+    bpf_u_int32        net        = 0;
+
+    if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1)
+    {
+        LOG_ERR(glb_logger, "Failed to compile filter: ", pcap_geterr(handle));
+        return 4;
+    }
+
+    if (pcap_setfilter(handle, &fp) == -1)
+    {
+        LOG_ERR(glb_logger, "Failed to set filter: ", pcap_geterr(handle));
+        pcap_freecode(&fp);
+        return 5;
+    }
+
+    pcap_freecode(&fp);
+
     ARPFrame arp_frame;
     MAKE_ARP(arp_frame);
     for (size_t i = 0; i < 6; ++i)
@@ -317,20 +362,15 @@ int main()
 
     pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
 
-    IPFrame*                         data    = nullptr;
-    bool                             success = false;
-    chrono::steady_clock::time_point start   = chrono::steady_clock::now();
-    chrono::steady_clock::time_point now     = start;
-    while ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
+    IPFrame* data = nullptr;
+    while (true)
     {
-        if (now - start > chrono::seconds(5)) break;
-        now = chrono::steady_clock::now();
+        res = pcap_next_ex(handle, &buffer_header, &buffer_data);
 
         if (res == 0) continue;
 
         data = (IPFrame*)buffer_data;
         if (iptos(data->ip_header.src_ip) != local_ip) continue;
-        success = true;
 
         for (size_t i = 0; i < 6; ++i) local_mac[i] = data->eth_header.src_mac[i];
 
@@ -343,16 +383,17 @@ int main()
             local_mac[5]);
         break;
     }
-    if (!success)
+    if (res <= 0)
     {
         LOG_ERR(glb_logger, "Failed to get local mac: ", pcap_geterr(handle));
         LOG(glb_logger, "Router End");
-        return 4;
+        return 6;
     }
 
     // 初始化路由表与ARP表
     route_tree = new RouteTree(dev);
     arp_table  = new ARP_Table();
+    arp_table->set_timeout(30);
 
 #ifndef DBG_ARP
     thread packet_thread(capture_packets, handle);
