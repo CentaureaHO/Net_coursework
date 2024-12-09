@@ -233,17 +233,21 @@ void packet_handler()
         }
     }
 
-    if (send_to_here) return;                              // No need to handle packets sent to this device
-    if (IS_BROADCAST_FRAME(ip_frame->eth_header)) return;  // No need to handle broadcast packets
+    // cout << "Capture a ip packet.\n";
+    LOG(packet_logger, "Capture a IP packet.");
 
-    string next_jump = route_tree->lookup(ip_frame->ip_header.dst_ip, 32);
+    if (send_to_here) return;  // No need to handle packets sent to this
+    // LOG(packet_logger, "But sent to here.");
+    if (IS_BROADCAST_FRAME(ip_frame->eth_header)) return;  // No need to handle broadcast packets
+    // LOG(packet_logger, "But broadcase");
+
+    string next_jump = route_tree->lookup(iptos(ip_frame->ip_header.dst_ip), 32);
+    LOG(packet_logger, "Capture a packet to ", iptos(ip_frame->ip_header.dst_ip), ", find next jump: ", next_jump);
     if (next_jump == "")
     {
         // TODO: send icmp destination unreachable
         return;
     }
-
-    LOG(packet_logger, "Capture a packet to ", iptos(ip_frame->ip_header.dst_ip), ", find next jump: ", next_jump);
 
     if (next_jump == "Direct")
     {
