@@ -25,7 +25,6 @@ namespace
 
     Logger packet_logger("Router_packet.log");
 
-    // singleton
     class MemControl
     {
       private:
@@ -94,34 +93,79 @@ bool get_mac(const string& ip, uint8_t* mac)
     arp_frame.recv_ip = inet_addr(ip.c_str());
 
     pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
+    LOG(packet_logger, "Sent ARP request for IP: ", ip);
 
     ARPFrame* data = nullptr;
     // chrono::steady_clock::time_point start = chrono::steady_clock::now();
     // chrono::steady_clock::time_point now   = start;
     while ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
     {
-        // if (now - start > chrono::seconds(5))
-        //{
-        //     LOG_ERR(glb_logger, "Failed to get mac for ", ip, ": ", pcap_geterr(handle));
-        //     return false;
-        // }
-        // now = chrono::steady_clock::now();
+        // 超时处理（已注释）
+        /*
+        if (now - start > chrono::seconds(5))
+        {
+            LOG_ERR(glb_logger, "Failed to get mac for ", ip, ": ", pcap_geterr(handle));
+            return false;
+        }
+        now = chrono::steady_clock::now();
+        */
 
         if (res == 0) continue;
 
         data = (ARPFrame*)buffer_data;
-        if (iptos(data->send_ip) != ip) continue;        // Not the target ip
-        if (data->operation != htons(0x0002)) continue;  // Not ARP reply
+        if (iptos(data->send_ip) != ip) continue;        // 不是目标IP
+        if (data->operation != htons(0x0002)) continue;  // 不是ARP回复
         for (size_t i = 0; i < 6; ++i) mac[i] = data->eth_header.src_mac[i];
+        LOG(packet_logger,
+            "Received ARP reply for IP: ",
+            ip,
+            " MAC: ",
+            hex,
+            (int)mac[0],
+            "-",
+            (int)mac[1],
+            "-",
+            (int)mac[2],
+            "-",
+            (int)mac[3],
+            "-",
+            (int)mac[4],
+            "-",
+            (int)mac[5]);
         break;
     }
 
+    if (res < 0)
+    {
+        LOG_ERR(glb_logger, "pcap_next_ex error: ", pcap_geterr(handle));
+        return false;
+    }
+
     arp_table->insert(ip, mac);
+    LOG(packet_logger,
+        "Inserted ARP entry: ",
+        ip,
+        " -> ",
+        hex,
+        setw(2),
+        setfill('0'),
+        (int)mac[0],
+        "-",
+        (int)mac[1],
+        "-",
+        (int)mac[2],
+        "-",
+        (int)mac[3],
+        "-",
+        (int)mac[4],
+        "-",
+        (int)mac[5]);
     return true;
 }
 
 void print_mac_table()
 {
+    LOG(glb_logger, "Printing ARP table.");
     cout << "ARP table: \n";
     for (auto& [ip, mask] : local_ips)
     {
@@ -135,6 +179,7 @@ void print_mac_table()
             local_mac[5]);
     }
     arp_table->print();
+    LOG(glb_logger, "ARP table printed successfully.");
 }
 
 uint8_t strMask2num(const string& str_mask)
@@ -148,27 +193,33 @@ uint8_t strMask2num(const string& str_mask)
 
     uint32_t mask_int = (hi << 24) | (mi << 16) | (lo << 8) | la;
     uint8_t  cnt      = 0;
-    for (int mi = 31; mi >= 0; --mi)
+    for (int mi_bit = 31; mi_bit >= 0; --mi_bit)
     {
-        if (mask_int & (1 << mi))
+        if (mask_int & (1 << mi_bit))
             ++cnt;
         else
             break;
     }
+    LOG(glb_logger, "Converted netmask ", str_mask, " to CIDR: ", (int)cnt);
     return cnt;
 }
 
 void packet_handler()
 {
     EthHeader* eth_header = (EthHeader*)buffer_data;
-    // if (memcmp(eth_header->des_mac, local_mac, 6) != 0) return;  // Handle packets sent to this device only
+
+    // 仅处理发送给本设备的包
+    if (memcmp(eth_header->des_mac, local_mac, 6) != 0) return;
+
     if (ntohs(eth_header->frame_type) == 0x0806)
     {
-        // LOG(packet_logger, "Capture a ARP packet");
+        // 处理 ARP 数据包
         ARPFrame* arp_frame = (ARPFrame*)buffer_data;
         if (arp_frame->operation == htons(0x0001))
         {
-            // ARP request
+            // ARP 请求
+            LOG(packet_logger, "Received ARP request from IP: ", iptos(arp_frame->send_ip));
+
             ARPFrame reply_frame;
             MAKE_ARP(reply_frame);
             for (size_t i = 0; i < 6; ++i)
@@ -181,45 +232,64 @@ void packet_handler()
             reply_frame.send_ip = inet_addr(local_ip.c_str());
             reply_frame.recv_ip = arp_frame->send_ip;
 
-            pcap_sendpacket(handle, (u_char*)&reply_frame, sizeof(ARPFrame));
+            if (pcap_sendpacket(handle, (u_char*)&reply_frame, sizeof(ARPFrame)) == 0)
+            {
+                LOG(packet_logger, "Sent ARP reply to IP: ", iptos(arp_frame->send_ip));
+            }
+            else { LOG_ERR(glb_logger, "Failed to send ARP reply: ", pcap_geterr(handle)); }
         }
         else if (arp_frame->operation == htons(0x0002))
         {
-            // cout << "Capture ARP reply\n";
+            // ARP 回复
             LOG(packet_logger,
-                "Capture a arp reply with ",
+                "Captured ARP reply: IP ",
                 iptos(arp_frame->send_ip),
                 " -> ",
                 hex,
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[0],
                 "-",
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[1],
                 "-",
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[2],
                 "-",
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[3],
                 "-",
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[4],
                 "-",
+                setw(2),
+                setfill('0'),
                 (int)arp_frame->send_ha[5],
-                "; add to ARP table");
+                "; adding to ARP table.");
             arp_table->insert(iptos(arp_frame->send_ip), arp_frame->send_ha);
         }
         return;
     }
-    if (ntohs(eth_header->frame_type) != 0x0800) return;  // Handle ARP or IPv4 packets only
-    // LOG(packet_logger, "Capture a IP packet");
 
+    if (ntohs(eth_header->frame_type) != 0x0800) return;  // 仅处理 ARP 或 IPv4 数据包
+
+    // 处理 IP 数据包
     IPFrame* ip_frame = (IPFrame*)buffer_data;
 
     if (!checkCheckSum(*ip_frame))
     {
-        // todo: log error
+        LOG_WARN(glb_logger, "Invalid checksum for IP packet from ", iptos(ip_frame->ip_header.src_ip));
         return;
     }
+
     if (ip_frame->ip_header.ttl <= 1)
     {
-        // todo: send icmp time exceeded
+        LOG_WARN(glb_logger, "TTL expired for IP packet from ", iptos(ip_frame->ip_header.src_ip));
+        // TODO: 发送 ICMP Time Exceeded
         return;
     }
 
@@ -233,19 +303,34 @@ void packet_handler()
         }
     }
 
-    // cout << "Capture a ip packet.\n";
-    LOG(packet_logger, "Capture a IP packet.");
+    if (send_to_here)
+    {
+        // LOG(packet_logger, "Packet is destined for this router. No forwarding needed.");
+        return;  // 目标为本机，不需要转发
+    }
+    if (IS_BROADCAST_FRAME(ip_frame->eth_header))
+    {
+        // LOG(packet_logger, "Packet is a broadcast frame. Ignoring.");
+        return;  // 广播帧，忽略
+    }
 
-    if (send_to_here) return;  // No need to handle packets sent to this
-    // LOG(packet_logger, "But sent to here.");
-    if (IS_BROADCAST_FRAME(ip_frame->eth_header)) return;  // No need to handle broadcast packets
-    // LOG(packet_logger, "But broadcase");
+    LOG(packet_logger,
+        "Captured IP packet from ",
+        iptos(ip_frame->ip_header.src_ip),
+        " to ",
+        iptos(ip_frame->ip_header.dst_ip));
 
     string next_jump = route_tree->lookup(iptos(ip_frame->ip_header.dst_ip), 32);
-    LOG(packet_logger, "Capture a packet to ", iptos(ip_frame->ip_header.dst_ip), ", find next jump: ", next_jump);
-    if (next_jump == "")
+    LOG(packet_logger,
+        "Lookup result for destination IP ",
+        iptos(ip_frame->ip_header.dst_ip),
+        ": Next jump = ",
+        next_jump);
+
+    if (next_jump.empty())
     {
-        // TODO: send icmp destination unreachable
+        LOG_WARN(glb_logger, "No route found for IP ", iptos(ip_frame->ip_header.dst_ip));
+        // TODO: 发送 ICMP Destination Unreachable
         return;
     }
 
@@ -254,32 +339,44 @@ void packet_handler()
         struct in_addr addr;
         addr.s_addr = ip_frame->ip_header.dst_ip;
         next_jump   = string(inet_ntoa(addr));
+        LOG(packet_logger, "Next jump is direct. IP: ", next_jump);
     }
 
-    if (!get_mac(next_jump, mac_buffer)) return;  // Failed to get mac
+    if (!get_mac(next_jump, mac_buffer))
+    {
+        LOG_WARN(glb_logger, "Failed to resolve MAC for next hop: ", next_jump);
+        return;  // 获取目标MAC失败
+    }
 
+    // 修改 IP 包的 TTL
     --ip_frame->ip_header.ttl;
+    LOG(packet_logger, "Decremented TTL. New TTL: ", (int)ip_frame->ip_header.ttl);
+
+    // 更新 Ethernet 头部
     for (size_t i = 0; i < 6; ++i)
     {
         ip_frame->eth_header.src_mac[i] = local_mac[i];
         ip_frame->eth_header.des_mac[i] = mac_buffer[i];
     }
     genCheckSum(*ip_frame);
+    LOG(packet_logger, "Recomputed checksum for IP packet.");
+
     size_t data_len = ntohs(ip_frame->ip_header.total_len) + sizeof(EthHeader);
-    if (!pcap_sendpacket(handle, (u_char*)ip_frame, data_len))
+    if (pcap_sendpacket(handle, (u_char*)ip_frame, data_len) == 0)
     {
-        cout << "Send packet to " << next_jump << '\n';
-        // TODO: log
+        LOG(packet_logger, "Forwarded packet to ", next_jump);
+        // cout << "Send packet to " << next_jump << '\n';
     }
     else
     {
-        cout << "Failed to send packet to " << next_jump << '\n';
-        // TODO: log err
+        LOG_ERR(glb_logger, "Failed to send packet to ", next_jump, ": ", pcap_geterr(handle));
+        // cout << "Failed to send packet to " << next_jump << '\n';
     }
 }
 
 void capture_packets(pcap_t* handle)
 {
+    LOG(glb_logger, "Packet capture thread started.");
     while (running)
     {
         if ((res = pcap_next_ex(handle, &buffer_header, &buffer_data)) >= 0)
@@ -293,6 +390,7 @@ void capture_packets(pcap_t* handle)
             break;
         }
     }
+    LOG(glb_logger, "Packet capture thread terminated.");
 }
 
 int main()
@@ -307,16 +405,18 @@ int main()
         return 1;
     }
 
+    LOG(glb_logger, "Selected device: ", (dev->description ? dev->description : "Anonymous device"));
+
     getLocalIPs(dev, local_ips);
     if (local_ips.empty())
     {
-        LOG_ERR(glb_logger, "Failed to get local ips");
+        LOG_ERR(glb_logger, "Failed to get local IPs");
         LOG(glb_logger, "Router End");
         return 2;
     }
     local_ip = local_ips.back().first;
     stringstream log_stream;
-    log_stream << "Get local ips: \n";
+    log_stream << "Get local IPs:\n";
     for (size_t i = 0; i < local_ips.size() - 1; ++i)
         log_stream << "\t" << i + 1 << ". IP: " << local_ips[i].first << "/" << (int)local_ips[i].second << '\n';
     log_stream << "\t" << local_ips.size() << ". IP: " << local_ips.back().first << "/" << (int)local_ips.back().second;
@@ -328,10 +428,11 @@ int main()
     handle = pcap_open_live(dev->name, 65535, 0, 1000, errbuf);
     if (!handle)
     {
-        LOG_ERR(glb_logger, "Faile to open device: ", errbuf);
+        LOG_ERR(glb_logger, "Failed to open device: ", errbuf);
         LOG(glb_logger, "Router End");
         return 3;
     }
+    LOG(glb_logger, "Opened device for packet capture: ", (dev->description ? dev->description : "Anonymous device"));
 
     struct bpf_program fp;
     const char*        filter_exp = "arp or ip";
@@ -351,7 +452,9 @@ int main()
     }
 
     pcap_freecode(&fp);
+    LOG(glb_logger, "Applied BPF filter: ", filter_exp);
 
+    // 发送初始 ARP 请求以获取本地 MAC 地址
     ARPFrame arp_frame;
     MAKE_ARP(arp_frame);
     for (size_t i = 0; i < 6; ++i)
@@ -364,19 +467,25 @@ int main()
     arp_frame.send_ip = inet_addr("114.51.41.91");
     arp_frame.recv_ip = inet_addr(local_ip.c_str());
 
-    pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame));
+    if (pcap_sendpacket(handle, (u_char*)&arp_frame, sizeof(ARPFrame)) == 0)
+    {
+        LOG(packet_logger, "Sent initial ARP request to 114.51.41.91");
+    }
+    else { LOG_ERR(glb_logger, "Failed to send initial ARP request: ", pcap_geterr(handle)); }
 
-    IPFrame* data = nullptr;
+    ARPFrame* data = nullptr;
     while (true)
     {
         res = pcap_next_ex(handle, &buffer_header, &buffer_data);
 
         if (res == 0) continue;
 
-        data = (IPFrame*)buffer_data;
-        if (iptos(data->ip_header.src_ip) != local_ip) continue;
+        data = (ARPFrame*)buffer_data;
+        if (data->operation != htons(0x0002)) continue;  // Handle reply packet only
+        // if (iptos(data->ip_header.src_ip) != local_ip) continue;
+        if (iptos(data->send_ip) != local_ip) continue;
 
-        for (size_t i = 0; i < 6; ++i) local_mac[i] = data->eth_header.src_mac[i];
+        for (size_t i = 0; i < 6; ++i) local_mac[i] = data->send_ha[i];
 
         printf("Get local mac: %02X-%02X-%02X-%02X-%02X-%02X\n",
             local_mac[0],
@@ -385,27 +494,45 @@ int main()
             local_mac[3],
             local_mac[4],
             local_mac[5]);
+        LOG(glb_logger,
+            "Obtained local MAC address: ",
+            hex,
+            setw(2),
+            setfill('0'),
+            (int)local_mac[0],
+            "-",
+            (int)local_mac[1],
+            "-",
+            (int)local_mac[2],
+            "-",
+            (int)local_mac[3],
+            "-",
+            (int)local_mac[4],
+            "-",
+            (int)local_mac[5]);
         break;
     }
     if (res <= 0)
     {
-        LOG_ERR(glb_logger, "Failed to get local mac: ", pcap_geterr(handle));
+        LOG_ERR(glb_logger, "Failed to get local MAC: ", pcap_geterr(handle));
         LOG(glb_logger, "Router End");
         return 6;
     }
 
-    // 初始化路由表与ARP表
+    // 初始化路由表与 ARP 表
     route_tree = new RouteTree(dev);
     arp_table  = new ARP_Table();
     arp_table->set_timeout(30);
+    LOG(glb_logger, "Initialized routing table and ARP table.");
 
 #ifndef DBG_ARP
     thread packet_thread(capture_packets, handle);
+    LOG(glb_logger, "Started packet capture thread.");
 #endif
 
     int     choice = 0;
     string  ip, mask, next_jump;
-    uint8_t mask_num = 0, res = 0;
+    uint8_t mask_num = 0, res_code = 0;
 #ifdef DBG_ARP
     uint8_t mac[6];
 #endif
@@ -433,16 +560,26 @@ int main()
                 if (mask_num > 32)
                 {
                     cout << "Invalid mask\n";
+                    LOG_WARN(glb_logger, "User entered invalid netmask: ", mask);
                     break;
                 }
 
-                res = route_tree->add_route(ip, mask_num, next_jump);
-                if (res == 0)
+                res_code = route_tree->add_route(ip, mask_num, next_jump);
+                if (res_code == 0)
+                {
                     cout << "Add route successfully\n";
-                else if (res == 1)
+                    LOG(glb_logger, "Added route: ", ip, "/", (int)mask_num, " via ", next_jump);
+                }
+                else if (res_code == 1)
+                {
                     cout << "Modify route successfully\n";
+                    LOG(glb_logger, "Modified route: ", ip, "/", (int)mask_num, " via ", next_jump);
+                }
                 else
+                {
                     cout << "Cannot modify direct route\n";
+                    LOG_WARN(glb_logger, "Attempted to modify direct route: ", ip, "/", (int)mask_num);
+                }
 
                 break;
             }
@@ -454,16 +591,26 @@ int main()
                 if (mask_num > 32)
                 {
                     cout << "Invalid mask\n";
+                    LOG_WARN(glb_logger, "User entered invalid netmask: ", mask);
                     break;
                 }
 
-                res = route_tree->remove_route(ip, mask_num);
-                if (res == 0)
+                res_code = route_tree->remove_route(ip, mask_num);
+                if (res_code == 0)
+                {
                     cout << "Remove route successfully\n";
-                else if (res == 1)
+                    LOG(glb_logger, "Removed route: ", ip, "/", (int)mask_num);
+                }
+                else if (res_code == 1)
+                {
                     cout << "Remove route failed\n";
+                    LOG_WARN(glb_logger, "Failed to remove route: ", ip, "/", (int)mask_num);
+                }
                 else
+                {
                     cout << "Cannot remove direct route\n";
+                    LOG_WARN(glb_logger, "Attempted to remove direct route: ", ip, "/", (int)mask_num);
+                }
 
                 break;
             }
@@ -471,6 +618,7 @@ int main()
                 cout << '\n';
                 route_tree->print();
                 cout << '\n';
+                LOG(glb_logger, "Printed routing table.");
                 break;
             case 4:
                 cout << '\n';
@@ -486,20 +634,53 @@ int main()
                 {
                     cout << "MAC: ";
                     printf("%02X-%02X-%02X-%02X-%02X-%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                    LOG(packet_logger,
+                        "Requested MAC for IP ",
+                        ip,
+                        " is ",
+                        hex,
+                        (int)mac[0],
+                        "-",
+                        setw(2),
+                        setfill('0'),
+                        (int)mac[1],
+                        "-",
+                        setw(2),
+                        setfill('0'),
+                        (int)mac[2],
+                        "-",
+                        setw(2),
+                        setfill('0'),
+                        (int)mac[3],
+                        "-",
+                        setw(2),
+                        setfill('0'),
+                        (int)mac[4],
+                        "-",
+                        setw(2),
+                        setfill('0'),
+                        (int)mac[5]);
                 }
                 else
+                {
                     cout << "Failed to get mac\n";
+                    LOG_WARN(glb_logger, "Failed to get MAC for IP: ", ip);
+                }
                 break;
             }
 #endif
-            default: cout << "Invalid choice\n"; break;
+            default:
+                cout << "Invalid choice\n";
+                LOG_WARN(glb_logger, "User entered invalid choice: ", choice);
+                break;
         }
     }
 
-    // 资源受RALL管理，不需要在此处释放
+    // 资源由 MemControl 管理，不需要在此处释放
     running = false;
 #ifndef DBG_ARP
     packet_thread.join();
+    LOG(glb_logger, "Packet capture thread joined.");
 #endif
     LOG(glb_logger, "Router End");
     return 0;
