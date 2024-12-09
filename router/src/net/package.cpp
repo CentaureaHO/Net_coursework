@@ -32,10 +32,39 @@ uint16_t genCheckSum(IPFrame& packet)
     packet.ip_header.checksum = ~(sum & 0xFFFF);
     return packet.ip_header.checksum;
 }
-bool checkCheckSum(IPFrame& packet)
+bool checkCheckSum(const IPFrame& packet)
 {
     uint32_t  sum  = 0;
-    uint16_t* data = reinterpret_cast<uint16_t*>(&packet.ip_header);
+    const uint16_t* data = reinterpret_cast<const uint16_t*>(&packet.ip_header);
+
+    for (size_t i = 0; i < sizeof(IPHeader) / 2; ++i)
+    {
+        sum += data[i];
+        if (sum > 0xFFFF) sum -= 0xFFFF;
+    }
+
+    return (sum & 0xFFFF) == 0xFFFF;
+}
+
+uint16_t genCheckSum(IPHeader& packet)
+{
+    packet.checksum = 0;
+    uint32_t  sum   = 0;
+    uint16_t* data  = reinterpret_cast<uint16_t*>(&packet);
+
+    for (size_t i = 0; i < sizeof(IPHeader) / 2; ++i)
+    {
+        sum += data[i];
+        if (sum > 0xFFFF) sum -= 0xFFFF;
+    }
+
+    packet.checksum = ~(sum & 0xFFFF);
+    return packet.checksum;
+}
+bool checkCheckSum(const IPHeader& packet)
+{
+    uint32_t  sum  = 0;
+    const uint16_t* data = reinterpret_cast<const uint16_t*>(&packet);
 
     for (size_t i = 0; i < sizeof(IPHeader) / 2; ++i)
     {
@@ -50,7 +79,7 @@ uint16_t genCheckSum(ICMPHeader& packet)
 {
     packet.checksum = 0;
     uint32_t  sum   = 0;
-    uint16_t* data  = reinterpret_cast<uint16_t*>(&packet);
+    uint16_t* data  = (uint16_t*)(&packet.type);
 
     for (size_t i = 0; i < sizeof(ICMPHeader) / 2; ++i)
     {
@@ -61,10 +90,10 @@ uint16_t genCheckSum(ICMPHeader& packet)
     packet.checksum = ~(sum & 0xFFFF);
     return packet.checksum;
 }
-bool checkCheckSum(ICMPHeader& packet)
+bool checkCheckSum(const ICMPHeader& packet)
 {
     uint32_t  sum  = 0;
-    uint16_t* data = reinterpret_cast<uint16_t*>(&packet);
+    const uint16_t* data = (const uint16_t*)(&packet.type);
 
     for (size_t i = 0; i < sizeof(ICMPHeader) / 2; ++i)
     {
@@ -73,4 +102,17 @@ bool checkCheckSum(ICMPHeader& packet)
     }
 
     return (sum & 0xFFFF) == 0xFFFF;
+}
+
+uint16_t compute_checksum(uint16_t* data, int len)
+{
+    uint32_t sum = 0;
+    while (len > 1)
+    {
+        sum += *data++;
+        len -= 2;
+    }
+    if (len > 0) { sum += *((uint8_t*)data) << 8; }
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
+    return ~sum;
 }

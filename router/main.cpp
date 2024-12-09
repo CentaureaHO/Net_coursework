@@ -204,6 +204,68 @@ uint8_t strMask2num(const string& str_mask)
     return cnt;
 }
 
+bool send_icmp_error(const IPFrame& original_ip_frame, uint8_t type, uint8_t code)
+{
+    size_t original_ip_header_len = (original_ip_frame.ip_header.ver_hlen & 0x0F) * 4;
+    size_t icmp_data_len          = original_ip_header_len + 8;
+    size_t icmp_total_len = sizeof(uint8_t) * 2 + sizeof(uint16_t) + icmp_data_len;  // type, code, checksum, data
+    size_t total_size     = sizeof(EthHeader) + sizeof(IPHeader) + icmp_total_len;
+
+    uint8_t* buffer = new uint8_t[total_size];
+    memset(buffer, 0, total_size);
+
+    EthHeader* eth_header = (EthHeader*)buffer;
+    IPHeader*  ip_header  = (IPHeader*)(buffer + sizeof(EthHeader));
+    uint8_t*   icmp_ptr   = buffer + sizeof(EthHeader) + sizeof(IPHeader);
+
+    memcpy(eth_header->des_mac, original_ip_frame.eth_header.src_mac, 6);
+    memcpy(eth_header->src_mac, local_mac, 6);
+    eth_header->frame_type = htons(0x0800);
+
+    ip_header->ver_hlen     = (4 << 4) | 5;
+    ip_header->tos          = 0;
+    ip_header->total_len    = htons(sizeof(IPHeader) + icmp_total_len);
+    ip_header->id           = htons(0);
+    ip_header->flag_segment = htons(0);
+    ip_header->ttl          = 64;
+    ip_header->protocol     = 1;
+    ip_header->checksum     = 0;
+    ip_header->src_ip       = original_ip_frame.ip_header.dst_ip;
+    ip_header->dst_ip       = original_ip_frame.ip_header.src_ip;
+
+    ip_header->checksum = genCheckSum(*ip_header);
+
+    icmp_ptr[0]            = type;
+    icmp_ptr[1]            = code;
+    uint16_t* checksum_ptr = (uint16_t*)(icmp_ptr + 2);
+    *checksum_ptr          = 0;
+
+    memcpy(icmp_ptr + 4, &original_ip_frame.ip_header, original_ip_header_len);
+    memcpy(icmp_ptr + 4 + original_ip_header_len, buffer_data + sizeof(IPFrame), 8);
+
+    uint16_t icmp_checksum = compute_checksum((uint16_t*)icmp_ptr, icmp_total_len);
+    *checksum_ptr          = icmp_checksum;
+
+    if (pcap_sendpacket(handle, buffer, total_size) == 0)
+    {
+        LOG(packet_logger,
+            "Sent ICMP error message type ",
+            (int)type,
+            " code ",
+            (int)code,
+            " to ",
+            iptos(ip_header->dst_ip));
+        delete[] buffer;
+        return true;
+    }
+    else
+    {
+        LOG_ERR(glb_logger, "Failed to send ICMP error message: ", pcap_geterr(handle));
+        delete[] buffer;
+        return false;
+    }
+}
+
 void packet_handler()
 {
     EthHeader* eth_header = (EthHeader*)buffer_data;
@@ -289,7 +351,8 @@ void packet_handler()
     if (ip_frame->ip_header.ttl <= 1)
     {
         LOG_WARN(glb_logger, "TTL expired for IP packet from ", iptos(ip_frame->ip_header.src_ip));
-        // TODO: 发送 ICMP Time Exceeded
+        // 发送 ICMP Time Exceeded 报文
+        send_icmp_error(*ip_frame, 11, 0);
         return;
     }
 
@@ -330,7 +393,8 @@ void packet_handler()
     if (next_jump.empty())
     {
         LOG_WARN(glb_logger, "No route found for IP ", iptos(ip_frame->ip_header.dst_ip));
-        // TODO: 发送 ICMP Destination Unreachable
+        // 发送 ICMP Destination Unreachable 报文
+        send_icmp_error(*ip_frame, 3, 0);  // Type 3, Code 0 (Network Unreachable)
         return;
     }
 
@@ -482,7 +546,6 @@ int main()
 
         data = (ARPFrame*)buffer_data;
         if (data->operation != htons(0x0002)) continue;  // Handle reply packet only
-        // if (iptos(data->ip_header.src_ip) != local_ip) continue;
         if (iptos(data->send_ip) != local_ip) continue;
 
         for (size_t i = 0; i < 6; ++i) local_mac[i] = data->send_ha[i];

@@ -35,6 +35,7 @@ struct IPFrame
 
 struct ICMPHeader
 {
+    IPFrame  ip_frame;        // IP 头部
     uint8_t  type;            // ICMP 类型
     uint8_t  code;            // ICMP 代码
     uint16_t checksum;        // 校验和
@@ -72,10 +73,33 @@ struct ARPFrame
         arp_frame.operation             = htons(0x0001); \
     }
 
+#define MAKE_ICMPV4(icmp_frame)                                                                                   \
+    {                                                                                                             \
+        icmp_frame.ip_frame.eth_header.frame_type = htons(0x0800);                                                \
+                                                                                                                  \
+        icmp_frame.ip_frame.ip_header.ver_hlen  = (4 << 4) | 5;                                                   \
+        icmp_frame.ip_frame.ip_header.tos       = 0;                                                              \
+        icmp_frame.ip_frame.ip_header.total_len = htons(sizeof(IPHeader) + sizeof(ICMPHeader) - sizeof(IPFrame)); \
+                                                                                                                  \
+        icmp_frame.ip_frame.ip_header.id           = htons(0);                                                    \
+        icmp_frame.ip_frame.ip_header.flag_segment = htons(0);                                                    \
+        icmp_frame.ip_frame.ip_header.ttl          = 64;                                                          \
+        icmp_frame.ip_frame.ip_header.protocol     = 1;                                                           \
+        icmp_frame.ip_frame.ip_header.checksum     = 0;                                                           \
+        icmp_frame.type                            = 8;                                                           \
+        icmp_frame.code                            = 0;                                                           \
+        icmp_frame.checksum                        = 0;                                                           \
+        icmp_frame.identification                  = htons(0);                                                    \
+        icmp_frame.seq                             = htons(0);                                                    \
+    }
+
 char*    iptos(uint64_t in);
 uint16_t genCheckSum(IPFrame& packet);
-bool     checkCheckSum(IPFrame& packet);
+bool     checkCheckSum(const IPFrame& packet);
+uint16_t genCheckSum(IPHeader& packet);
+bool     checkCheckSum(const IPHeader& packet);
 uint16_t genCheckSum(ICMPHeader& packet);
-bool     checkCheckSum(ICMPHeader& packet);
+bool     checkCheckSum(const ICMPHeader& packet);
+uint16_t compute_checksum(uint16_t* data, int len);
 
 #endif

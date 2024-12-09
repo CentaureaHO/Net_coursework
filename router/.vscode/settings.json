@@ -78,6 +78,11 @@
         "syncstream": "cpp",
         "future": "cpp",
         "regex": "cpp",
-        "sstream": "cpp"
+        "sstream": "cpp",
+        "valarray": "cpp",
+        "ranges": "cpp",
+        "__split_buffer": "cpp",
+        "forward_list": "cpp",
+        "any": "cpp"
     }
 }
